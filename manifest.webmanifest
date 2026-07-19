@@ -1,0 +1,16 @@
+{
+  "name": "A Paper Boat",
+  "short_name": "A Paper Boat",
+  "description": "Мальчик запускает бумажный кораблик по ручью и бежит рядом. Сплитскрин-раннер.",
+  "lang": "ru",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#241f18",
+  "theme_color": "#241f18",
+  "icons": [
+    {"src": "./icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "./icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}

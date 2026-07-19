@@ -1,0 +1,702 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#241f18" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <!-- ФИНАЛ полосной саги (v0.29, вердикт двух независимых ресёрчей + замеры):
+         «мир под островом И под home-индикатором» на home-screen PWA НЕВОЗМОЖЕН —
+         WebKit-баги 236445 (chin gap у black-translucent: вьюпорт сдвинут, низ не
+         компенсирован) и 264220 (fullscreen-режим не убирает статус-бар). CSS правит
+         содержимое WKWebView, но не его геометрию. Выбран вариант А: системная зона
+         сверху = «шапка» цвета мира (камуфляж: body/manifest/theme-color = #241f18),
+         мир — от шапки до ФИЗИЧЕСКОГО низа. black, не default: на целевом устройстве
+         эмпирически даёт тёмную шапку с белыми часами (default рискует тёмными
+         глифами). Настоящие 852pt под всеми оверлеями — только Capacitor/натив.
+         СМЕНА ЭТОЙ МЕТЫ = переустановка иконки. -->
+    <meta name="apple-mobile-web-app-status-bar-style" content="black" />
+    <meta name="apple-mobile-web-app-title" content="A Paper Boat" />
+    <title>A Paper Boat</title>
+    <style>
+      /* Safe-area инсеты standalone-PWA (часы/Dynamic Island/home-индикатор).
+         Пробрасываем env() в CSS-переменные — читаются и JS-ом (main.ts, HUD в канвасе),
+         и CSS-ом; на десктопе/в снапшоте env()=0 → фолбэк 0px. */
+      :root {
+        --sat: env(safe-area-inset-top, 0px);
+        --sar: env(safe-area-inset-right, 0px);
+        --sab: env(safe-area-inset-bottom, 0px);
+        --sal: env(safe-area-inset-left, 0px);
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      /* Пин к РЕАЛЬНОМУ вьюпорту + лечение «коричневой полосы снизу» standalone-PWA.
+         Диагноз (плейтест ×3, высота полосы ≈ safe-area-top): в режиме
+         black-translucent iOS делает layout-вьюпорт КОРОЧЕ экрана ровно на
+         статус-бар, а контент рисует от самого верха → снизу дыра. position:fixed
+         не спасает — он меряется от того же короткого вьюпорта. Лечение: main.ts
+         замеряет дыру (screen.height − innerHeight, только standalone+портрет)
+         в CSS-переменную --vh-hole, и все полноэкранные слои докидывают её к
+         высоте. В Safari/Android/десктопе --vh-hole = 0 — ничего не меняется. */
+      html,
+      body {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: calc(100% + var(--vh-hole, 0px));
+        overflow: hidden;
+        /* #241f18 В УНИСОН с manifest background_color/theme_color и theme-color-метой:
+           iOS красит системную зону обёртки фоном страницы — единый цвет превращает
+           «шапку» со статус-баром в визуальное продолжение мира (v0.29, вариант А). */
+        background: #241f18;
+        touch-action: none;
+        overscroll-behavior: none;
+        -webkit-user-select: none;
+        user-select: none;
+        font-family: -apple-system, system-ui, sans-serif;
+      }
+      #game {
+        display: block;
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: calc(100% + var(--vh-hole, 0px));
+      }
+      /* Пруд флотилии — фон-канвас стартового экрана И Лавки. Топ-левел (не внутри
+         #screen-start), над #game, под .screen — чтобы жить под оверлеем Лавки. */
+      #pond {
+        position: fixed;
+        inset: 0;
+        width: 100%;
+        height: calc(100% + var(--vh-hole, 0px));
+        z-index: 1;
+      }
+      #pond.hidden {
+        display: none;
+      }
+      #screen-start .card {
+        position: relative;
+        z-index: 1;
+      }
+      /* Стартовый экран: карточка в верхней трети (не прилипает к кромке — плейтест
+         2026-07-10 «почему так высоко?»), нижняя половина открыта под пруд с
+         флотилией. Фон прозрачный — пруд-канвас (#pond) виден ярко под карточкой. */
+      #screen-start {
+        align-items: flex-start;
+        background: transparent;
+        padding-top: max(9vh, calc(env(safe-area-inset-top, 0px) + 24px));
+        padding-top: max(9dvh, calc(env(safe-area-inset-top, 0px) + 24px));
+      }
+      #screen-start .card {
+        width: min(82vw, 300px);
+        padding: 18px 20px;
+      }
+      #screen-start .card h1 {
+        font-size: 27px;
+      }
+      #screen-start .card .subtitle {
+        margin-bottom: 12px;
+      }
+      #screen-start .card p {
+        font-size: 13px;
+        margin-bottom: 8px;
+      }
+      /* Низ карточки (плейтест №4): кнопки скопом ниже текста, под ними кошелёк,
+         версия — в самом низу */
+      #btn-start {
+        margin-top: 18px;
+      }
+      #wallet-line {
+        margin-top: 16px;
+      }
+      .card .ver {
+        margin-bottom: 0;
+      }
+      .screen {
+        position: fixed;
+        inset: 0;
+        height: calc(100% + var(--vh-hole, 0px));
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(36, 31, 24, 0.55);
+        z-index: 10;
+      }
+      .screen.hidden {
+        display: none;
+      }
+      .card {
+        background: #f4ecd9;
+        color: #4a3f2e;
+        border-radius: 14px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+        padding: 28px 26px;
+        width: min(85vw, 340px);
+        text-align: center;
+        animation: card-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+      }
+      @keyframes card-in {
+        from {
+          opacity: 0;
+          transform: translateY(26px) scale(0.96);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .card .best {
+        margin-top: 14px;
+        font-size: 12.5px;
+        color: #8a755a;
+        font-style: italic;
+      }
+      .record-badge {
+        display: inline-block;
+        background: #b8862e;
+        color: #fdf6e4;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding: 5px 14px;
+        border-radius: 999px;
+        margin-bottom: 12px;
+        animation: badge-pop 0.5s cubic-bezier(0.2, 1.4, 0.4, 1) 0.2s backwards;
+      }
+      .record-badge.hidden {
+        display: none;
+      }
+      @keyframes badge-pop {
+        from {
+          opacity: 0;
+          transform: scale(0.4) rotate(-6deg);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      .card h1 {
+        font-family: Georgia, 'Times New Roman', serif;
+        font-weight: 700;
+        font-size: 34px;
+        letter-spacing: 0.5px;
+        margin-bottom: 2px;
+      }
+      .card .subtitle {
+        font-style: italic;
+        font-family: Georgia, serif;
+        color: #8a755a;
+        font-size: 14px;
+        margin-bottom: 18px;
+      }
+      .card p {
+        font-size: 14px;
+        line-height: 1.5;
+        margin-bottom: 10px;
+      }
+      .card .quote {
+        font-family: Georgia, serif;
+        font-style: italic;
+        font-size: 16px;
+        line-height: 1.45;
+        margin-bottom: 14px;
+      }
+      .card .hint {
+        color: #8a755a;
+        font-size: 12.5px;
+        margin-bottom: 16px;
+      }
+      .card .stats {
+        display: flex;
+        justify-content: center;
+        gap: 16px;
+        margin-bottom: 16px;
+        font-size: 13px;
+      }
+      .card .stats b {
+        display: block;
+        font-size: 19px;
+      }
+      .card .score-line {
+        font-size: 13px;
+        color: #8a755a;
+        margin-bottom: 16px;
+      }
+      .card .score-line b {
+        font-size: 17px;
+        color: #4a3f2e;
+      }
+      .card .flow-line {
+        font-size: 12.5px;
+        font-style: italic;
+        color: #b8862e;
+        margin-bottom: 14px;
+      }
+      /* Кнопки: единая вертикальная метрика (inline-flex + min-height) — эмодзи,
+         SVG и текст сидят по одной оси, ряды кнопок ровные (плейтест 2026-07-10
+         «кривовато несимметрично») */
+      button.primary,
+      a.primary {
+        appearance: none;
+        border: none;
+        background: #7a5c3e;
+        color: #f4ecd9;
+        font-size: 16px;
+        font-weight: 600;
+        padding: 0 26px;
+        min-height: 48px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        line-height: 1.2;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      button.primary:active,
+      a.primary:active {
+        transform: scale(0.97);
+      }
+      .card .footer-quote {
+        margin-top: 16px;
+        font-size: 11.5px;
+        font-style: italic;
+        color: #a08c6e;
+        line-height: 1.4;
+      }
+      #btn-pause {
+        position: fixed;
+        right: 10px;
+        /* глубоко в правый нижний угол освободившегося низа; над home-индикатором.
+           В тесном вьюпорте (env=0) прижимается к самому углу — не налезает на мальчика */
+        bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+        z-index: 5;
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        border: 1.5px solid rgba(122, 92, 62, 0.45);
+        background: rgba(244, 236, 217, 0.92);
+        box-shadow: 0 2px 8px rgba(40, 28, 14, 0.35);
+        color: #4a3f2e;
+        cursor: pointer;
+        /* центрируем рисованный значок паузы оптически по центру круга */
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      #btn-pause svg {
+        display: block;
+      }
+      #btn-pause.hidden {
+        display: none;
+      }
+      .pause-actions {
+        display: flex;
+        gap: 10px;
+        justify-content: center;
+      }
+      button.ghost {
+        appearance: none;
+        border: 1.5px solid #7a5c3e;
+        background: transparent;
+        color: #7a5c3e;
+        font-size: 14px;
+        font-weight: 600;
+        padding: 0 18px;
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 7px;
+        line-height: 1.2;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      button.ghost:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      /* Круглая кнопка звука на старте: квадрат под пилюлей = ровный круг,
+         рисованный SVG-динамик вместо системного эмодзи (шрам ⏸ v0.19) */
+      #btn-sound {
+        width: 44px;
+        padding: 0;
+      }
+      .snd-icon {
+        display: block;
+        flex: none;
+      }
+      button .snd-off {
+        display: none;
+      }
+      button.muted .snd-off {
+        display: inline;
+      }
+      button.muted .snd-on {
+        display: none;
+      }
+      .shop-card {
+        width: min(92vw, 380px);
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+      }
+      .shop-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .shop-head h1 {
+        font-size: 22px;
+        margin: 0;
+      }
+      .shop-magpie {
+        width: 34px;
+        height: 34px;
+        object-fit: contain;
+      }
+      .coin-ico {
+        width: 1em;
+        height: 1em;
+        object-fit: contain;
+        vertical-align: -0.15em;
+      }
+      .sub-ico {
+        width: 1.1em;
+        height: 1.1em;
+        object-fit: contain;
+        vertical-align: -0.2em;
+      }
+      .shop-item .item-ico {
+        width: 34px;
+        height: 34px;
+        object-fit: contain;
+        flex: none;
+      }
+      .shop-wallet {
+        margin-left: auto;
+        font-weight: 700;
+        font-size: 14px;
+        color: #b8862e;
+        white-space: nowrap;
+      }
+      .shop-flavor {
+        margin: 6px 0 10px;
+      }
+      .shop-tabs {
+        display: flex;
+        gap: 4px;
+        overflow-x: auto;
+        padding-bottom: 4px;
+      }
+      .shop-tab {
+        appearance: none;
+        border: 1.5px solid #7a5c3e;
+        background: transparent;
+        color: #7a5c3e;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 6px 10px;
+        border-radius: 999px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .shop-tab.active {
+        background: #7a5c3e;
+        color: #f4ecd9;
+      }
+      .shop-list {
+        text-align: left;
+        flex: 1;
+        min-height: 0;
+        overflow-y: auto;
+        margin: 12px 0 14px;
+      }
+      .shop-bio {
+        margin-top: 10px;
+        padding-top: 8px;
+        border-top: 1px solid rgba(122, 92, 62, 0.18);
+      }
+      .shop-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 8px 0;
+        border-top: 1px solid rgba(122, 92, 62, 0.18);
+      }
+      .shop-item .info {
+        flex: 1;
+      }
+      .shop-item .name {
+        font-weight: 700;
+        font-size: 14px;
+      }
+      .shop-item .sub {
+        font-size: 11.5px;
+        color: #8a755a;
+      }
+      .shop-item button {
+        appearance: none;
+        border: 1.5px solid #7a5c3e;
+        background: #7a5c3e;
+        color: #f4ecd9;
+        font-size: 12.5px;
+        font-weight: 600;
+        padding: 7px 12px;
+        border-radius: 999px;
+        cursor: pointer;
+        white-space: nowrap;
+      }
+      .shop-item button:disabled {
+        opacity: 0.4;
+        cursor: default;
+      }
+      .shop-item .badge,
+      .shop-badge {
+        font-size: 11.5px;
+        font-weight: 700;
+        color: #b8862e;
+        white-space: nowrap;
+      }
+      /* Строка версии билда на стартовой карточке — «доехал ли деплой» одним взглядом */
+      .card .ver {
+        margin-top: 8px;
+        font-size: 10px;
+        color: #b8a883;
+      }
+      /* Гард внутреннего браузера Telegram — глухой фон, поверх всех экранов */
+      #tg-guard {
+        background: #241f18;
+        z-index: 100;
+      }
+      /* Гейт «только-PWA» (вариант А): инструкция установки на экран «Домой» */
+      #pwa-guard {
+        background: #241f18;
+        z-index: 100;
+      }
+      #pwa-guard .pwa-steps {
+        text-align: left;
+        margin: 0 0 12px;
+        padding-left: 24px;
+        font-size: 14px;
+        line-height: 1.7;
+      }
+      #pwa-guard .share-icon {
+        vertical-align: -3px;
+        margin: 0 1px;
+      }
+      #tg-guard .tg-url {
+        margin-top: 14px;
+        font-size: 11px;
+        color: #a08c6e;
+        word-break: break-all;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      #tg-guard .tg-actions {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        align-items: center;
+      }
+      a.primary {
+        text-decoration: none;
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/index-C0wPQzqI.js"></script>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <!-- Пруд флотилии: топ-левел фон-канвас (под .screen, над #game), живёт и под Лавкой -->
+    <canvas id="pond" class="hidden"></canvas>
+    <button id="btn-pause" class="hidden" aria-label="Пауза">
+      <!-- рисованный значок паузы в палитре игры (вместо синего системного эмодзи iOS) -->
+      <svg width="15" height="15" viewBox="0 0 15 15" fill="currentColor" aria-hidden="true">
+        <rect x="3.5" y="2.5" width="3" height="10" rx="1.5" />
+        <rect x="8.5" y="2.5" width="3" height="10" rx="1.5" />
+      </svg>
+    </button>
+
+    <div id="screen-start" class="screen">
+      <div class="card">
+        <h1>A Paper Boat</h1>
+        <div class="subtitle">splitscreen runner</div>
+        <p>
+          Мальчик запускает бумажный кораблик по ручью и бежит рядом. Проведи их обоих как можно
+          дальше.
+        </p>
+        <p class="hint" id="hint-controls"></p>
+        <button class="primary" id="btn-start">Запустить кораблик</button>
+        <div
+          style="margin-top: 10px; display: flex; gap: 8px; justify-content: center; align-items: center"
+        >
+          <button class="ghost" id="btn-shop">
+            <img class="coin-ico" src="./assets/icons/ui-coin.png" alt="" /> Лавка
+          </button>
+          <button class="ghost" id="btn-sound" aria-label="Звук">
+            <svg class="snd-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.5 5.7h2.3L8.6 2.8v10.4L4.8 10.3H2.5z" fill="currentColor" />
+              <g
+                class="snd-on"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              >
+                <path d="M10.8 5.6a3.1 3.1 0 0 1 0 4.8" />
+                <path d="M12.6 3.9a5.6 5.6 0 0 1 0 8.2" />
+              </g>
+              <g class="snd-off" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <path d="M11 6.3l3.4 3.4M14.4 6.3L11 9.7" />
+              </g>
+            </svg>
+          </button>
+        </div>
+        <p class="best" id="wallet-line"></p>
+        <p class="best" id="best-line"></p>
+        <p class="ver" id="ver-line"></p>
+      </div>
+    </div>
+
+    <div id="screen-shop" class="screen hidden">
+      <div class="card shop-card">
+        <div class="shop-head">
+          <img class="shop-magpie" src="./assets/icons/ui-magpie.png" alt="" />
+          <h1>Лавка сороки</h1>
+          <div class="shop-wallet" id="shop-wallet">
+            <img class="coin-ico" src="./assets/icons/ui-coin.png" alt="" /> 0
+          </div>
+        </div>
+        <p class="hint shop-flavor">Сорока любит блестящее — приноси монеты из леса.</p>
+        <div class="shop-tabs" id="shop-tabs"></div>
+        <div id="shop-list" class="shop-list"></div>
+        <button class="primary" id="btn-shop-close">К пруду</button>
+      </div>
+    </div>
+
+    <div id="screen-over" class="screen hidden">
+      <div class="card">
+        <div id="new-record" class="record-badge hidden">новый рекорд!</div>
+        <div class="quote" id="over-quote"></div>
+        <div class="stats">
+          <div><b id="stat-dist">0</b>метров</div>
+          <div><b id="stat-coins">0</b>монет</div>
+          <div><b id="stat-acc">—</b>точность</div>
+        </div>
+        <div class="score-line">счёт: <b id="stat-score">0</b></div>
+        <div class="flow-line" id="stat-flow"></div>
+        <div class="pause-actions">
+          <button class="primary" id="btn-retry">Ещё раз</button>
+          <button class="ghost" id="btn-home">К пруду</button>
+        </div>
+        <div class="hint" style="margin-top: 10px">или свайп вверх — и снова в лес</div>
+        <div class="footer-quote">
+          «У этой игры нет финиша — но мы и не стремимся пересечь финишную линию.»
+        </div>
+      </div>
+    </div>
+
+    <div id="screen-pause" class="screen hidden">
+      <div class="card">
+        <h1 style="font-size: 24px">Пауза</h1>
+        <div class="subtitle">кораблик подождёт</div>
+        <div class="pause-actions">
+          <button class="primary" id="btn-resume" style="flex: 1">Продолжить</button>
+        </div>
+        <div class="pause-actions" style="margin-top: 10px">
+          <button class="ghost" id="btn-mute" style="flex: 1">
+            <svg class="snd-icon" width="16" height="16" viewBox="0 0 16 16" aria-hidden="true">
+              <path d="M2.5 5.7h2.3L8.6 2.8v10.4L4.8 10.3H2.5z" fill="currentColor" />
+              <g
+                class="snd-on"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+                stroke-linecap="round"
+              >
+                <path d="M10.8 5.6a3.1 3.1 0 0 1 0 4.8" />
+                <path d="M12.6 3.9a5.6 5.6 0 0 1 0 8.2" />
+              </g>
+              <g class="snd-off" stroke="currentColor" stroke-width="1.5" stroke-linecap="round">
+                <path d="M11 6.3l3.4 3.4M14.4 6.3L11 9.7" />
+              </g>
+            </svg>
+            <span id="mute-label">звук</span>
+          </button>
+          <button class="ghost" id="btn-quit" style="flex: 1">К пруду</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="pwa-guard" class="screen hidden">
+      <div class="card">
+        <h1>A Paper Boat</h1>
+        <div class="subtitle">поставь меня на экран «Домой»</div>
+        <p>
+          Игра живёт как приложение — так кораблики, монеты и рекорды остаются с тобой, а мир
+          занимает весь экран.
+        </p>
+        <ol class="pwa-steps">
+          <li>
+            Нажми <b>Поделиться</b>
+            <svg
+              class="share-icon"
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.4"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M8 9.5V1.8" />
+              <path d="M5.2 4.2 8 1.5l2.8 2.7" />
+              <path d="M5.5 6.5H4a1.5 1.5 0 0 0-1.5 1.5v5A1.5 1.5 0 0 0 4 14.5h8a1.5 1.5 0 0 0 1.5-1.5V8A1.5 1.5 0 0 0 12 6.5h-1.5" />
+            </svg>
+            в панели браузера
+          </li>
+          <li>Выбери <b>«На экран „Домой“»</b></li>
+          <li>Запусти <b>A Paper Boat</b> с домашнего экрана</li>
+        </ol>
+        <p class="hint">
+          В Safari кнопка «Поделиться» внизу, в Chrome — справа от адресной строки.
+        </p>
+      </div>
+    </div>
+
+    <div id="tg-guard" class="screen hidden">
+      <div class="card">
+        <h1>A Paper Boat</h1>
+        <div class="subtitle">не здесь</div>
+        <p>
+          Внутренний браузер Telegram не даёт кораблику плыть: игра не установится на экран, а
+          монеты и рекорды не переживут закрытие чата.
+        </p>
+        <p class="hint">Открой ссылку в Safari или Chrome — там всё как надо.</p>
+        <div class="tg-actions">
+          <a class="primary" id="tg-open" href="#">Открыть в браузере</a>
+          <button class="ghost" id="tg-copy">Скопировать ссылку</button>
+        </div>
+        <div class="hint" style="margin-top: 14px">
+          Или «⋯» в правом верхнем углу → «Открыть в браузере»
+        </div>
+        <div class="tg-url" id="tg-url"></div>
+      </div>
+    </div>
+
+  </body>
+</html>
